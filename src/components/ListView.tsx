@@ -32,7 +32,11 @@ export const ListView = ({
           </div>
         ) : (
           data.map((row: any) => {
-            const getColumnValue = (key: string) => {
+            const getColumnValue = (key?: string) => {
+              if (!key) return '-';
+              if (key === 'status' && typeof row.isComplete === 'boolean') {
+                return row.isComplete ? 'Done' : 'Pending';
+              }
               const value = row[key];
               if (Array.isArray(value)) {
                 return value.length > 0 ? value[0] : '-';
@@ -40,15 +44,19 @@ export const ListView = ({
               return value || '-';
             };
 
+            const title = row.name || row.lead || row.description || 'Unknown';
+            const subtitle = row.lead || row.description || '';
+            const avatarChar = (row.name || row.description || '?').charAt(0) || '?';
+
             return (
               <TableRow
                 key={row.id}
-                avatar={row.name?.charAt(0) || '?'}
-                title={row.lead || row.name || 'Unknown'}
-                subtitle={row.name || ''}
-                col2={getColumnValue(columns[1]?.key) || '-'}
-                col3={getColumnValue(columns[2]?.key) || '-'}
-                col4={getColumnValue(columns[3]?.key) || '-'}
+                avatar={avatarChar}
+                title={title}
+                subtitle={subtitle}
+                col2={getColumnValue(columns[1]?.key)}
+                col3={getColumnValue(columns[2]?.key)}
+                col4={getColumnValue(columns[3]?.key)}
                 onDelete={() => onDelete(row.id)}
               />
             );

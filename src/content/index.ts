@@ -79,38 +79,31 @@ const scrapeOpportunities = (): Opportunity[] => {
   return opps;
 };
 
-// --- Scraper: Tasks (Fluid & Compact) ---
+// --- Scraper: Tasks (Compact UI resilient) ---
 const scrapeTasks = (): Task[] => {
   const tasks: Task[] = [];
-  
-  // Selector for the generic row wrapper (works for Fluid and Compact based on naming convention)
-  // We match any class that has "CollapsedItemLayout" AND "afterCheckboxWrapper"
-  const rows = document.querySelectorAll('div[class*="CollapsedItemLayout_"][class*="afterCheckboxWrapper"]');
 
-  console.log(`[Extractor] Scanning Tasks (Fluid/Compact): Found ${rows.length} rows.`);
+  // Rows: compact task rows include CollapsedItemLayout + checkbox wrapper
+  const rows = document.querySelectorAll('div[class*="CollapsedItemLayout_"][class*="afterCheckboxWrapper"]');
+  console.log(`[Extractor] Scanning Tasks (Compact): Found ${rows.length} rows.`);
 
   rows.forEach((row) => {
     if (!(row instanceof HTMLElement)) return;
 
-    // 1. Description
-    // Fluid: div[class*="CollapsedItemLayout_fluid_title_"]
-    // Compact: div[class*="CollapsedItemLayout_compact_titleWrapper_"]
-    const titleEl = row.querySelector('[class*="_title_"], [class*="_titleWrapper_"]');
-    // For Fluid, the text is direct. For Compact, it might be nested, but textContent handles both.
-    // We clean it by taking the first line to avoid grabbing secondary titles if they are nested.
+    // Description: look for compact title ellipsis wrapper
+    const titleEl = row.querySelector('[class*="CollapsedItemLayout_compact_ellipsis"], [class*="_titleWrapper_"], [class*="_title_"]');
     const rawDesc = titleEl?.textContent?.trim() || "No Description";
     const description = rawDesc.split('\n')[0].trim();
 
-    // 2. Lead Name
-    // Look for link to lead inside the row info wrapper
+    // Lead name: link inside lead info wrapper
     const leadLink = row.querySelector('a[href*="/lead/"]');
     const leadName = leadLink?.textContent?.trim() || "";
-    
-    // 3. Due Date
-    const timeEl = row.querySelector('time');
+
+    // Due date: time element inside date wrapper
+    const timeEl = row.querySelector('div[class*="DateAndAssignee_dateWrapper"] time, time');
     const dueDate = timeEl?.getAttribute('datetime')?.split('T')[0] || timeEl?.textContent?.trim() || "No Date";
 
-    // Format for ID
+    // ID generation stable per task
     const fullDescription = leadName ? `${description} (${leadName})` : description;
     const id = btoa(fullDescription + dueDate).replace(/=/g, '').substring(0, 16);
 
@@ -118,10 +111,11 @@ const scrapeTasks = (): Task[] => {
       id,
       description: fullDescription,
       dueDate,
-      assignee: "Me", 
-      isComplete: false 
+      assignee: "Me",
+      isComplete: false
     });
   });
+
   return tasks;
 };
 
