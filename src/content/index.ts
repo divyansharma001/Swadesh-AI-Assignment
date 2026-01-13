@@ -2,10 +2,159 @@ import type { Contact, Opportunity, Task, StorageShape } from '../types/schema';
 
 console.log("Close Extractor: Content script loaded");
 
+// --- Shadow DOM Status Indicator ---
+const showExtractionStatus = (message: string, type: 'info' | 'success' | 'error' = 'info') => {
+  const hostId = 'close-extractor-status-host';
+  
+  // Remove existing indicator
+  const existing = document.getElementById(hostId);
+  if (existing) existing.remove();
+
+  const host = document.createElement('div');
+  host.id = hostId;
+  host.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 999999;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  `;
+
+  const shadow = host.attachShadow({ mode: 'open' });
+  
+  const colors = {
+    info: '#3b82f6',
+    success: '#10b981',
+    error: '#ef4444'
+  };
+
+  const style = document.createElement('style');
+  style.textContent = `
+    .indicator {
+      background: ${colors[type]};
+      color: white;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      animation: slideIn 0.3s ease-out;
+    }
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateX(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+  `;
+  shadow.appendChild(style);
+
+  const indicator = document.createElement('div');
+  indicator.className = 'indicator';
+  
+  if (type === 'info') {
+    indicator.innerHTML = '<div class="spinner"></div>' + message;
+  } else {
+    indicator.textContent = message;
+  }
+
+  shadow.appendChild(indicator);
+  document.body.appendChild(host);
+
+  // Auto-remove after delay for success/error
+  if (type !== 'info') {
+    setTimeout(() => host.remove(), 3000);
+  }
+};
+
+const hideExtractionStatus = () => {
+  const host = document.getElementById('close-extractor-status-host');
+  if (host) host.remove();
+};
+
 // --- Helper: Sleep ---
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-// --- Helper: Column Index Finder ---
+// --- DOM Change Detection & Auto-extract ---
+let extractionInProgress = false;
+const setupAutoExtract = () => {
+  const observer = new MutationObserver((mutations) => {
+    // Skip if already extracting or no mutations
+    if (extractionInProgress || mutations.length === 0) return;
+
+    // Check if new list items were loaded (lazy load detection)
+    const hasNewContent = mutations.some(m => {
+      if (m.type === 'childList') {
+        return m.addedNodes.length > 0 && Array.from(m.addedNodes).some(node => {
+          const el = node as HTMLElement;
+          return el.className?.includes?.('DataTable_row_') || 
+                 el.className?.includes?.('OpportunityCard_card_') ||
+                 el.className?.includes?.('CollapsedItemLayout_');
+        });
+      }
+      return false;
+    });
+
+    if (hasNewContent) {
+      console.log("[Extractor] DOM change detected, triggering extraction...");
+      // Trigger extraction automatically
+      chrome.runtime.sendMessage({ type: 'EXTRACT_DATA' }).catch(() => {});
+    }
+  });
+
+  // Observe body for deep changes
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: false,
+    characterData: false
+  });
+
+  return observer;
+};
+
+setupAutoExtract();
+
+// --- Helper: Pagination Handler ---
+const scrollToLoadAll = async () => {
+  const scrollContainer = document.querySelector('[class*="Table"]') || document.body;
+  let lastHeight = 0;
+  let attempts = 0;
+  const maxAttempts = 10;
+
+  while (attempts < maxAttempts) {
+    const container = scrollContainer as HTMLElement;
+    const newHeight = container.scrollHeight;
+
+    if (newHeight === lastHeight) break; // No new content loaded
+
+    lastHeight = newHeight;
+    container.scrollTop = newHeight;
+    await sleep(300);
+    attempts++;
+  }
+
+  console.log(`[Extractor] Pagination complete after ${attempts} scrolls`);
+};
 const getColumnIndices = () => {
   const headers = Array.from(document.querySelectorAll('thead th'));
   const indices: Record<string, number> = { leadName: 0, contactName: 3 }; 
@@ -125,6 +274,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'EXTRACT_DATA') {
     const url = window.location.href;
     console.log("[Extractor] Triggered on:", url);
+    
+    // Check if another extraction is in progress on this tab
+    if (extractionInProgress) {
+      console.warn("[Extractor] Extraction already in progress, ignoring request");
+      sendResponse({ 
+        success: false, 
+        message: "Extraction already in progress" 
+      });
+      return true;
+    }
+    
+    showExtractionStatus('Extracting data...', 'info');
+    
+    // Signal to background that extraction started
+    chrome.runtime.sendMessage({ type: 'EXTRACTION_STARTED' }).catch(() => {});
 
     const performExtraction = async () => {
       let newContacts: Contact[] = [];
@@ -133,51 +297,87 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       let attempt = 0;
       let totalCount = 0;
 
-      // Retry loop (wait for lazy loading)
-      while (attempt < 5 && totalCount === 0) {
-        if (attempt > 0) await sleep(500);
+      extractionInProgress = true;
 
-        if (url.includes('/leads') || url.includes('search')) {
-           newContacts = scrapeContacts();
-        } else if (url.includes('/opportunities')) {
-           newOpps = scrapeOpportunities();
-        } else if (url.includes('/tasks') || url.includes('/inbox')) {
-           newTasks = scrapeTasks();
-        } else {
-           // Fallback / Dashboard
-           newContacts = scrapeContacts();
-           if (document.querySelector('[class*="OpportunityCard_card_"]')) newOpps = scrapeOpportunities();
-           if (document.querySelector('[class*="CollapsedItemLayout_"]')) newTasks = scrapeTasks();
+      try {
+        // Scroll to load paginated content
+        await scrollToLoadAll();
+
+        // Retry loop (wait for lazy loading)
+        while (attempt < 5 && totalCount === 0) {
+          if (attempt > 0) await sleep(500);
+
+          if (url.includes('/leads') || url.includes('search')) {
+             newContacts = scrapeContacts();
+          } else if (url.includes('/opportunities')) {
+             newOpps = scrapeOpportunities();
+          } else if (url.includes('/tasks') || url.includes('/inbox')) {
+             newTasks = scrapeTasks();
+          } else {
+             // Fallback / Dashboard
+             newContacts = scrapeContacts();
+             if (document.querySelector('[class*="OpportunityCard_card_"]')) newOpps = scrapeOpportunities();
+             if (document.querySelector('[class*="CollapsedItemLayout_"]')) newTasks = scrapeTasks();
+          }
+
+          totalCount = newContacts.length + newOpps.length + newTasks.length;
+          attempt++;
         }
 
-        totalCount = newContacts.length + newOpps.length + newTasks.length;
-        attempt++;
-      }
+        // Save
+        chrome.storage.local.get('close_data', (result) => {
+          const raw = result.close_data;
+          const currentData: StorageShape = (raw as StorageShape) || { 
+            contacts: {}, opportunities: {}, tasks: {}, lastSync: 0 
+          };
 
-      // Save
-      chrome.storage.local.get('close_data', (result) => {
-        const raw = result.close_data;
-        const currentData: StorageShape = (raw as StorageShape) || { 
-          contacts: {}, opportunities: {}, tasks: {}, lastSync: 0 
-        };
+          newContacts.forEach(c => currentData.contacts[c.id] = c);
+          newOpps.forEach(o => currentData.opportunities[o.id] = o);
+          newTasks.forEach(t => currentData.tasks[t.id] = t);
+          
+          currentData.lastSync = Date.now();
 
-        newContacts.forEach(c => currentData.contacts[c.id] = c);
-        newOpps.forEach(o => currentData.opportunities[o.id] = o);
-        newTasks.forEach(t => currentData.tasks[t.id] = t);
-        
-        currentData.lastSync = Date.now();
+          console.log("[Extractor] Saving data:", currentData);
 
-        console.log("[Extractor] Saving data:", currentData);
+          chrome.storage.local.set({ 'close_data': currentData }, () => {
+            console.log(`[Extractor] Saved. Count: ${totalCount}`);
+            
+            if (totalCount > 0) {
+              showExtractionStatus(`✓ Extracted ${totalCount} items`, 'success');
+            } else {
+              showExtractionStatus('No items found. Try scrolling?', 'error');
+            }
+            
+            setTimeout(() => hideExtractionStatus(), 2000);
+            
+            // Signal to background that extraction completed
+            chrome.runtime.sendMessage({ 
+              type: 'EXTRACTION_COMPLETED', 
+              count: totalCount 
+            }).catch(() => {});
+            
+            sendResponse({ 
+              success: true, 
+              message: totalCount > 0 ? `Successfully extracted ${totalCount} items.` : "No items found. Try scrolling?",
+              count: totalCount
+            });
 
-        chrome.storage.local.set({ 'close_data': currentData }, () => {
-          console.log(`[Extractor] Saved. Count: ${totalCount}`);
-          sendResponse({ 
-            success: true, 
-            message: totalCount > 0 ? `Successfully extracted ${totalCount} items.` : "No items found. Try scrolling?",
-            count: totalCount
+            extractionInProgress = false;
           });
         });
-      });
+      } catch (error) {
+        console.error("[Extractor] Extraction error:", error);
+        showExtractionStatus('Extraction failed', 'error');
+        
+        // Signal error to background
+        chrome.runtime.sendMessage({ 
+          type: 'EXTRACTION_COMPLETED', 
+          count: 0 
+        }).catch(() => {});
+        
+        extractionInProgress = false;
+        sendResponse({ success: false, message: String(error) });
+      }
     };
 
     performExtraction();

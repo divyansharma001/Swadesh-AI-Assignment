@@ -21,6 +21,22 @@ function App() {
 
   useEffect(() => { refreshData(); }, []);
 
+  useEffect(() => {
+    // Listen for storage changes from other tabs
+    const handleStorageChange = (changes: Record<string, chrome.storage.StorageChange>) => {
+      if (changes['close_data']) {
+        console.log("[App] Storage changed from another tab, refreshing...");
+        refreshData();
+      }
+    };
+
+    chrome.storage.onChanged.addListener(handleStorageChange);
+
+    return () => {
+      chrome.storage.onChanged.removeListener(handleStorageChange);
+    };
+  }, []);
+
   const handleExtract = async () => {
     setLoading(true);
     setMsg('Connecting...');
@@ -53,6 +69,8 @@ function App() {
   const handleClearAll = async () => {
     if(confirm("Clear all data?")) {
       await clearData();
+      // Notify background to broadcast clear to other tabs
+      await chrome.runtime.sendMessage({ type: 'CLEAR_DATA' }).catch(() => {});
       await refreshData();
     }
   };
@@ -77,7 +95,7 @@ function App() {
       <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} onClearAll={handleClearAll} />
 
       <main className="flex-1 flex flex-col relative bg-black">
-        <Header search={search} setSearch={setSearch} onExtract={handleExtract} loading={loading} />
+        <Header search={search} setSearch={setSearch} onExtract={handleExtract} loading={loading} lastSync={data.lastSync} data={data} />
 
         <div className="flex-1 overflow-y-auto">
           {msg && (
