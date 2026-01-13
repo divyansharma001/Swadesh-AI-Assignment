@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Close CRM Extractor",
+  "version": "1.0",
+  "description": "Extracts Contacts, Opps, and Tasks from Close.com",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": ["https://*.close.com/*"],
+  "action": {
+    "default_popup": "index.html",
+    "default_icon": "vite.svg"
+  },
+  "background": {
+    "service_worker": "assets/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.close.com/*"],
+      "js": ["assets/content.js"]
+    }
+  ]
+}
