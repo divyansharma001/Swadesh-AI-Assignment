@@ -5,6 +5,7 @@ import { resolve } from 'path';
 export default defineConfig({
   plugins: [react()],
   build: {
+    chunkSizeWarningLimit: 1000,
     rollupOptions: {
       input: {
         popup: resolve(__dirname, 'index.html'),
@@ -15,6 +16,9 @@ export default defineConfig({
         entryFileNames: 'assets/[name].js',
         chunkFileNames: 'assets/[name].js',
         assetFileNames: 'assets/[name].[ext]',
+        manualChunks: {
+          'recharts': ['recharts'],
+        },
       },
     },
     outDir: 'dist',
