@@ -2,11 +2,11 @@ import type { Contact, Opportunity, Task, StorageShape } from '../types/schema';
 
 console.log("Close Extractor: Content script loaded");
 
-// --- Shadow DOM Status Indicator ---
+
 const showExtractionStatus = (message: string, type: 'info' | 'success' | 'error' = 'info') => {
   const hostId = 'close-extractor-status-host';
   
-  // Remove existing indicator
+ 
   const existing = document.getElementById(hostId);
   if (existing) existing.remove();
 
@@ -80,7 +80,7 @@ const showExtractionStatus = (message: string, type: 'info' | 'success' | 'error
   shadow.appendChild(indicator);
   document.body.appendChild(host);
 
-  // Auto-remove after delay for success/error
+ 
   if (type !== 'info') {
     setTimeout(() => host.remove(), 3000);
   }
@@ -91,17 +91,16 @@ const hideExtractionStatus = () => {
   if (host) host.remove();
 };
 
-// --- Helper: Sleep ---
+
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-// --- DOM Change Detection & Auto-extract ---
+
 let extractionInProgress = false;
 const setupAutoExtract = () => {
   const observer = new MutationObserver((mutations) => {
-    // Skip if already extracting or no mutations
+    
     if (extractionInProgress || mutations.length === 0) return;
 
-    // Check if new list items were loaded (lazy load detection)
     const hasNewContent = mutations.some(m => {
       if (m.type === 'childList') {
         return m.addedNodes.length > 0 && Array.from(m.addedNodes).some(node => {
@@ -116,12 +115,11 @@ const setupAutoExtract = () => {
 
     if (hasNewContent) {
       console.log("[Extractor] DOM change detected, triggering extraction...");
-      // Trigger extraction automatically
+
       chrome.runtime.sendMessage({ type: 'EXTRACT_DATA' }).catch(() => {});
     }
   });
 
-  // Observe body for deep changes
   observer.observe(document.body, {
     childList: true,
     subtree: true,
@@ -134,7 +132,7 @@ const setupAutoExtract = () => {
 
 setupAutoExtract();
 
-// --- Helper: Pagination Handler ---
+
 const scrollToLoadAll = async () => {
   const scrollContainer = document.querySelector('[class*="Table"]') || document.body;
   let lastHeight = 0;
@@ -145,7 +143,7 @@ const scrollToLoadAll = async () => {
     const container = scrollContainer as HTMLElement;
     const newHeight = container.scrollHeight;
 
-    if (newHeight === lastHeight) break; // No new content loaded
+    if (newHeight === lastHeight) break; 
 
     lastHeight = newHeight;
     container.scrollTop = newHeight;
@@ -167,7 +165,7 @@ const getColumnIndices = () => {
   return indices;
 };
 
-// --- Scraper: Contacts ---
+
 const scrapeContacts = (): Contact[] => {
   const contacts: Contact[] = [];
   const rows = document.querySelectorAll('tbody tr[class*="DataTable_row_"]');
@@ -198,7 +196,6 @@ const scrapeContacts = (): Contact[] => {
   return contacts;
 };
 
-// --- Scraper: Opportunities ---
 const scrapeOpportunities = (): Opportunity[] => {
   const opps: Opportunity[] = [];
   const columns = document.querySelectorAll('[class*="Table_Column_list_"]');
@@ -228,31 +225,29 @@ const scrapeOpportunities = (): Opportunity[] => {
   return opps;
 };
 
-// --- Scraper: Tasks (Compact UI resilient) ---
+
 const scrapeTasks = (): Task[] => {
   const tasks: Task[] = [];
 
-  // Rows: compact task rows include CollapsedItemLayout + checkbox wrapper
+
   const rows = document.querySelectorAll('div[class*="CollapsedItemLayout_"][class*="afterCheckboxWrapper"]');
   console.log(`[Extractor] Scanning Tasks (Compact): Found ${rows.length} rows.`);
 
   rows.forEach((row) => {
     if (!(row instanceof HTMLElement)) return;
 
-    // Description: look for compact title ellipsis wrapper
+   
     const titleEl = row.querySelector('[class*="CollapsedItemLayout_compact_ellipsis"], [class*="_titleWrapper_"], [class*="_title_"]');
     const rawDesc = titleEl?.textContent?.trim() || "No Description";
     const description = rawDesc.split('\n')[0].trim();
 
-    // Lead name: link inside lead info wrapper
     const leadLink = row.querySelector('a[href*="/lead/"]');
     const leadName = leadLink?.textContent?.trim() || "";
 
-    // Due date: time element inside date wrapper
     const timeEl = row.querySelector('div[class*="DateAndAssignee_dateWrapper"] time, time');
     const dueDate = timeEl?.getAttribute('datetime')?.split('T')[0] || timeEl?.textContent?.trim() || "No Date";
 
-    // ID generation stable per task
+  
     const fullDescription = leadName ? `${description} (${leadName})` : description;
     const id = btoa(fullDescription + dueDate).replace(/=/g, '').substring(0, 16);
 
@@ -268,14 +263,13 @@ const scrapeTasks = (): Task[] => {
   return tasks;
 };
 
-// --- Main Handler ---
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log(sender)
   if (message.type === 'EXTRACT_DATA') {
     const url = window.location.href;
     console.log("[Extractor] Triggered on:", url);
     
-    // Check if another extraction is in progress on this tab
+   
     if (extractionInProgress) {
       console.warn("[Extractor] Extraction already in progress, ignoring request");
       sendResponse({ 
@@ -287,7 +281,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     
     showExtractionStatus('Extracting data...', 'info');
     
-    // Signal to background that extraction started
+ 
     chrome.runtime.sendMessage({ type: 'EXTRACTION_STARTED' }).catch(() => {});
 
     const performExtraction = async () => {
@@ -300,10 +294,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       extractionInProgress = true;
 
       try {
-        // Scroll to load paginated content
+     
         await scrollToLoadAll();
 
-        // Retry loop (wait for lazy loading)
+    
         while (attempt < 5 && totalCount === 0) {
           if (attempt > 0) await sleep(500);
 
@@ -314,7 +308,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           } else if (url.includes('/tasks') || url.includes('/inbox')) {
              newTasks = scrapeTasks();
           } else {
-             // Fallback / Dashboard
              newContacts = scrapeContacts();
              if (document.querySelector('[class*="OpportunityCard_card_"]')) newOpps = scrapeOpportunities();
              if (document.querySelector('[class*="CollapsedItemLayout_"]')) newTasks = scrapeTasks();
@@ -350,7 +343,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             
             setTimeout(() => hideExtractionStatus(), 2000);
             
-            // Signal to background that extraction completed
+  
             chrome.runtime.sendMessage({ 
               type: 'EXTRACTION_COMPLETED', 
               count: totalCount 
@@ -368,8 +361,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       } catch (error) {
         console.error("[Extractor] Extraction error:", error);
         showExtractionStatus('Extraction failed', 'error');
-        
-        // Signal error to background
+     
         chrome.runtime.sendMessage({ 
           type: 'EXTRACTION_COMPLETED', 
           count: 0 
@@ -381,6 +373,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     };
 
     performExtraction();
-    return true; // Async
+    return true; 
   }
 });

@@ -43,7 +43,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         notifyAllTabs({ type: 'DATA_CLEARED' });
       });
       return true;
-    }
+    } 
 
  
     sendResponse({ error: 'Unknown message type' });
